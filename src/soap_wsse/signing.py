@@ -10,26 +10,27 @@ import base64
 import os
 from uuid import uuid4
 
-import dm.xmlsec.binding as xmlsec
-from dm.xmlsec.binding.tmpl import Signature
+import xmlsec
+# from dm.xmlsec.binding.tmpl import Signature
 from lxml import etree
 from OpenSSL import crypto
 
-from soap_wsse import ns
+from src.soap_wsse import ns
 
 
 logger = logging.getLogger(__name__)
 
 
 BODY_XPATH = etree.XPath(
-    '/SOAP-ENV:Envelope/SOAP-ENV:Body', namespaces=ns.NSMAP)
+    '/soap:Envelope/ns1:Body', namespaces=ns.NSMAP)
 HEADER_XPATH = etree.XPath(
-    '/SOAP-ENV:Envelope/SOAP-ENV:Header', namespaces=ns.NSMAP)
+    '/soap:Envelope/soap:Header', namespaces=ns.NSMAP)
 SECURITY_XPATH = etree.XPath('wsse:Security', namespaces=ns.NSMAP)
+SIGNATURE_XPATH = etree.XPath('ds:Signature', namespaces=ns.NSMAP)
 TIMESTAMP_XPATH = etree.XPath('wsu:Timestamp', namespaces=ns.NSMAP)
 
 C14N = 'http://www.w3.org/2001/10/xml-exc-c14n#'
-XMLDSIG_SHA1 = 'http://www.w3.org/2000/09/xmldsig#sha1'
+XMLDSIG_SHA256 = 'http://www.w3.org/2001/04/xmlenc#sha256'
 
 
 def ns_id(tagname, suds_ns):
@@ -41,12 +42,12 @@ BINARY_TOKEN_TYPE = (
     'oasis-200401-wss-x509-token-profile-1.0#X509v3')
 
 
-def log_errors(filename, line, func, errorObject, errorSubject, reason, msg):
+def log_errors(filename, line, func, error_object, error_subject, reason, msg):
     info = []
-    if errorObject != 'unknown':
-        info.append('obj=' + errorObject)
-    if errorSubject != 'unknown':
-        info.append('subject=' + errorSubject)
+    if error_object != 'unknown':
+        info.append('obj=' + error_object)
+    if error_subject != 'unknown':
+        info.append('subject=' + error_subject)
     if msg.strip():
         info.append('msg=' + msg)
     if info:
@@ -58,8 +59,8 @@ class CertificationError(Exception):
 
 
 # Initialize the xmlsec library
-xmlsec.initialize()
-xmlsec.set_error_callback(log_errors)
+# xmlsec.initialize()
+# xmlsec.set_error_callback(log_errors)
 
 
 class SignQueue(object):
@@ -90,7 +91,7 @@ class SignQueue(object):
             elm = _create_element(node, 'ec:InclusiveNamespaces', nsmap)
             elm.set('PrefixList', 'urn')
 
-            set_algorithm(reference, 'DigestMethod', XMLDSIG_SHA1)
+            set_algorithm(reference, 'DigestMethod', XMLDSIG_SHA256)
             etree.SubElement(reference, self.DS_DIGEST_VALUE)
 
 
@@ -104,8 +105,13 @@ def sign_envelope(envelope, key_file):
 
     security_node = ensure_security_header(doc, queue)
     security_token_node = create_binary_security_token(key_file)
-    signature_node = Signature(
-        xmlsec.TransformExclC14N, xmlsec.TransformRsaSha1)
+    signature_node = xmlsec.template.create(
+        doc,
+        xmlsec.Transform.EXCL_C14N,
+        xmlsec.Transform.RSA_SHA256,
+        None,
+        'ds',
+    )
 
     security_node.append(security_token_node)
     security_node.append(signature_node)
@@ -115,28 +121,32 @@ def sign_envelope(envelope, key_file):
     signature_node.append(key_info)
 
     # Sign the generated xml
-    xmlsec.addIDs(doc, ['Id'])
-    dsigCtx = xmlsec.DSigCtx()
-    dsigCtx.signKey = xmlsec.Key.load(key_file, xmlsec.KeyDataFormatPem, None)
-    dsigCtx.sign(signature_node)
+    xmlsec.tree.add_ids(doc, ['Id'])
+    dsig_ctx = xmlsec.SignatureContext()
+    dsig_ctx.key = xmlsec.Key.from_file(key_file, xmlsec.KeyFormat.PEM)
+    dsig_ctx.sign(signature_node)
     return etree.tostring(doc)
 
 
 def verify_envelope(reply, key_file):
     """Verify that the given soap request is signed with the certificate"""
     doc = etree.fromstring(reply)
-    node = doc.find(".//{%s}Signature" % xmlsec.DSigNs)
-    if node is None:
+    (header,) = HEADER_XPATH(doc)
+    security = SECURITY_XPATH(header)
+    signature = SIGNATURE_XPATH(security)
+    
+    if signature is None:
         raise CertificationError("No signature node found")
-    dsigCtx = xmlsec.DSigCtx()
+    
+    dsig_ctx = xmlsec.SignatureContext()
 
-    xmlsec.addIDs(doc, ['Id'])
-    signKey = xmlsec.Key.load(key_file, xmlsec.KeyDataFormatPem)
-    signKey.name = os.path.basename(key_file)
+    xmlsec.tree.add_ids(doc, ['Id'])
+    sign_key = xmlsec.Key.from_file(key_file, xmlsec.KeyFormat.PEM)
+    sign_key.name = os.path.basename(key_file)
 
-    dsigCtx.signKey = signKey
+    dsig_ctx.key = sign_key
     try:
-        dsigCtx.verify(node)
+        dsig_ctx.verify(signature)
     except xmlsec.VerificationError:
         return False
     return True
@@ -196,7 +206,7 @@ def create_binary_security_token(key_file):
     node.set('EncodingType', ns.wssns[1] + 'Base64Binary')
     node.set('ValueType', BINARY_TOKEN_TYPE)
 
-    with open(key_file) as fh:
+    with open(key_file, 'rb') as fh:
         cert = crypto.load_certificate(crypto.FILETYPE_PEM, fh.read())
         node.text = base64.b64encode(
             crypto.dump_certificate(crypto.FILETYPE_ASN1, cert))
