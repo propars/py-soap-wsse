@@ -11,6 +11,7 @@ tests_require = [
     'pytest-cov>=1.7.0',
     'pretend>=1.0.0',
     'suds-jurko>=0.6',
+    'xmlsec',
 ]
 
 setup(
@@ -21,9 +22,9 @@ setup(
     author="Michael van Tellingen",
     author_email="michaelvantellingen@gmail.com",
     install_requires=[
-        'dm.xmlsec.binding==1.3.2',
         'lxml>=3.0.0',
-        'pyOpenSSL>=0.14',
+        'pyopenssl',
+        'xmlsec',
     ],
     tests_require=tests_require,
     extras_require={'test': tests_require},
