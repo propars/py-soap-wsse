@@ -8,6 +8,7 @@
 import logging
 import base64
 import os
+import socket
 from uuid import uuid4
 
 import xmlsec
@@ -27,6 +28,7 @@ HEADER_XPATH = etree.XPath(
     '/soap:Envelope/soap:Header', namespaces=ns.NSMAP)
 SECURITY_XPATH = etree.XPath('wsse:Security', namespaces=ns.NSMAP)
 SIGNATURE_XPATH = etree.XPath('ds:Signature', namespaces=ns.NSMAP)
+KEYINFO_XPATH = etree.XPath('ds:KeyInfo', namespaces=ns.NSMAP)
 TIMESTAMP_XPATH = etree.XPath('wsu:Timestamp', namespaces=ns.NSMAP)
 
 C14N = 'http://www.w3.org/2001/10/xml-exc-c14n#'
@@ -95,6 +97,28 @@ class SignQueue(object):
             etree.SubElement(reference, self.DS_DIGEST_VALUE)
 
 
+def sign_wss(xml_envelope):
+    xml_signed = b""
+
+    SIGNER_IP = "localhost"
+    SIGNER_PORT = 33333
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    sock.connect((SIGNER_IP, SIGNER_PORT))
+    sock.send(b"signWSS\n" + xml_envelope)
+    sock.shutdown(socket.SHUT_WR)
+
+    while True:
+        readbuf = sock.recv(4096)
+        if not readbuf:  # Daha fazla okuyacak birsey yok
+            break
+        else:
+            xml_signed += readbuf
+
+    return xml_signed
+
+
 def sign_envelope(envelope, key_file):
     """Sign the given soap request with the given key"""
     doc = etree.fromstring(envelope)
@@ -105,27 +129,19 @@ def sign_envelope(envelope, key_file):
 
     security_node = ensure_security_header(doc, queue)
     security_token_node = create_binary_security_token(key_file)
-    signature_node = xmlsec.template.create(
-        doc,
-        xmlsec.Transform.EXCL_C14N,
-        xmlsec.Transform.RSA_SHA256,
-        None,
-        'ds',
-    )
-
     security_node.append(security_token_node)
-    security_node.append(signature_node)
-    queue.insert_references(signature_node)
 
+    signed_envelope = sign_wss(etree.tostring(doc))
+    signed_etree = etree.fromstring(signed_envelope)
+
+    (header,) = HEADER_XPATH(signed_etree)
+    security = SECURITY_XPATH(header)
+    signature = SIGNATURE_XPATH(security[0])
+    keyinfo = KEYINFO_XPATH(signature[0])
     key_info = create_key_info_node(security_token_node)
-    signature_node.append(key_info)
-
-    # Sign the generated xml
-    xmlsec.tree.add_ids(doc, ['Id'])
-    dsig_ctx = xmlsec.SignatureContext()
-    dsig_ctx.key = xmlsec.Key.from_file(key_file, xmlsec.KeyFormat.PEM)
-    dsig_ctx.sign(signature_node)
-    return etree.tostring(doc)
+    keyinfo[0].append(key_info)
+    
+    return etree.tostring(signed_etree)
 
 
 def verify_envelope(reply, key_file):
@@ -182,17 +198,13 @@ def create_key_info_node(security_token):
         </ds:KeyInfo>
 
     """
-    key_info = etree.Element(ns_id('KeyInfo', ns.dsns))
 
-    sec_token_ref = etree.SubElement(
-        key_info, ns_id('SecurityTokenReference', ns.wssens))
-    sec_token_ref.set(
-        ns_id('TokenType', ns.wssens), security_token.get('ValueType'))
-
+    sec_token_ref = etree.Element(ns_id('SecurityTokenReference', ns.wssens))
+    sec_token_ref.set(ns_id('TokenType', ns.wssens), security_token.get('ValueType'))
     reference = etree.SubElement(sec_token_ref, ns_id('Reference', ns.wssens))
     reference.set('ValueType', security_token.get('ValueType'))
     reference.set('URI', '#%s' % security_token.get(WSU_ID))
-    return key_info
+    return sec_token_ref
 
 
 def create_binary_security_token(key_file):
