@@ -134,11 +134,17 @@ def sign_envelope(envelope, key_file):
     signed_envelope = sign_wss(etree.tostring(doc))
     signed_etree = etree.fromstring(signed_envelope)
 
+
     (header,) = HEADER_XPATH(signed_etree)
     security = SECURITY_XPATH(header)
     signature = SIGNATURE_XPATH(security[0])
     keyinfo = KEYINFO_XPATH(signature[0])
     key_info = create_key_info_node(security_token_node)
+
+    # java imzacinin koydugu ve gib'in begenmedigi SecurityTokenReference kaldirilir
+    java_keyinfo = keyinfo[0].find("{http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd}SecurityTokenReference")
+    keyinfo[0].remove(java_keyinfo)
+
     keyinfo[0].append(key_info)
     
     return etree.tostring(signed_etree)
