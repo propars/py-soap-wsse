@@ -1,15 +1,16 @@
-import sys, os
+import sys, os, socket
 
 #sys.path.append(os.path.abspath("src"))
 
 
 # pip install -e . komutu gerektirir
-from soap_wsse.suds_plugin import WssePlugin
-
+from suds.plugin import MessagePlugin
 from suds.client import Client
 from suds.wsse import Security, Timestamp
 from suds.bindings import binding
 binding.envns=('soap', 'http://www.w3.org/2003/05/soap-envelope')
+from soap_wsse.signing import SignQueue, ensure_security_header, create_binary_security_token, get_body
+from soap_wsse.signing import HEADER_XPATH, SECURITY_XPATH, SIGNATURE_XPATH, KEYINFO_XPATH, create_key_info_node
 
 import logging
 
@@ -32,7 +33,7 @@ wsse.tokens.append(Timestamp())
 def sign_wss(xml_envelope):
     xml_signed = b""
 
-    SIGNER_IP = "172.17.0.96"
+    SIGNER_IP = "localhost"#"172.17.0.96"
     SIGNER_PORT = 33333
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
