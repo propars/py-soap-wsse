@@ -3,8 +3,8 @@ try:
 except ImportError:
     raise ImportError("The suds WssePlugin requires suds to be installed")
 
-from src.soap_wsse import sign_envelope, verify_envelope
-from src.soap_wsse.signing import CertificationError
+from soap_wsse import sign_envelope, verify_envelope
+from soap_wsse.signing import CertificationError
 
 
 class WssePlugin(MessagePlugin):
